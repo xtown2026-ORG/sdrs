@@ -1,9 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Clock, MapPin } from 'lucide-react';
-import api from '../../api/axios';
 
-const RateCard = ({ title, weight, rate, trend, delay }) => {
+const RATE_MODE = import.meta.env.VITE_RATE_MODE || 'goldapi';
+const GOLD_API_KEY = import.meta.env.VITE_GOLD_API_KEY;
+const GOLD_API_BASE_URL = import.meta.env.VITE_GOLD_API_BASE_URL || 'https://www.goldapi.io/api';
+const GOLD_RATE_CACHE_KEY = 'sdrs-gold-rate-cache';
+const DAILY_RATE_CONFIG = {
+  gold24k: import.meta.env.VITE_DAILY_GOLD_24K || '15764',
+  gold22k: import.meta.env.VITE_DAILY_GOLD_22K || '14450',
+  gold18k: import.meta.env.VITE_DAILY_GOLD_18K || '11823',
+  silver: import.meta.env.VITE_DAILY_SILVER || '275',
+  updatedAt: import.meta.env.VITE_DAILY_RATE_UPDATED_AT || new Date().toLocaleDateString('en-GB'),
+};
+
+const RateCard = ({ title, weight, rate, trend, delay, mode }) => {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -25,7 +36,7 @@ const RateCard = ({ title, weight, rate, trend, delay }) => {
       </p>
 
       <div className={`mt-6 flex items-center gap-2 text-xs font-bold px-3 py-1 rounded-full ${trend === 'down' ? 'bg-brand-red/10 text-brand-red' : 'bg-green-500/10 text-green-500'}`}>
-        {trend === 'up' ? '+' : '-'} Live Market
+        {trend === 'up' ? '+' : '-'} {mode === 'live' ? 'Live Market' : 'Daily Rate'}
       </div>
     </motion.div>
   );
@@ -49,24 +60,127 @@ const GoldRateSection = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const getTodayCacheKey = () => new Date().toISOString().slice(0, 10);
+
+  const parseRateDate = (value) => {
+    if (!value) {
+      return new Date();
+    }
+
+    if (value instanceof Date) {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const ddmmyyyyMatch = value.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+      if (ddmmyyyyMatch) {
+        const [, day, month, year] = ddmmyyyyMatch;
+        return new Date(`${year}-${month}-${day}T00:00:00`);
+      }
+    }
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  };
+
+  const buildGoldApiRates = (goldData, silverData) => {
+    const goldTrend = goldData.ch >= 0 ? 'up' : 'down';
+    const silverTrend = silverData.ch >= 0 ? 'up' : 'down';
+
+    return {
+      gold24k: Math.round(goldData.price_gram_24k),
+      gold22k: Math.round(goldData.price_gram_22k),
+      gold18k: Math.round(goldData.price_gram_18k),
+      silver: Math.round(silverData.price_gram_24k),
+      updatedAt: goldData.timestamp ? new Date(goldData.timestamp * 1000).toISOString() : new Date().toISOString(),
+      trends: {
+        gold24k: goldTrend,
+        gold22k: goldTrend,
+        gold18k: goldTrend,
+        silver: silverTrend
+      }
+    };
+  };
+
+  const applyRates = (payload) => {
+    const dateObj = parseRateDate(payload.lastUpdated || payload.updatedAt);
+    setRates(prev => ({
+      ...prev,
+      ...payload,
+      lastUpdated: dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      lastUpdatedDate: dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      trends: payload.trends || prev.trends
+    }));
+  };
+
+  const fetchGoldApiRates = async () => {
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-access-token': GOLD_API_KEY,
+    };
+
+    const [goldResponse, silverResponse] = await Promise.all([
+      fetch(`${GOLD_API_BASE_URL}/XAU/INR`, { method: 'GET', headers }),
+      fetch(`${GOLD_API_BASE_URL}/XAG/INR`, { method: 'GET', headers }),
+    ]);
+
+    if (!goldResponse.ok || !silverResponse.ok) {
+      throw new Error('GoldAPI request failed');
+    }
+
+    const [goldData, silverData] = await Promise.all([
+      goldResponse.json(),
+      silverResponse.json(),
+    ]);
+
+    const payload = buildGoldApiRates(goldData, silverData);
+    localStorage.setItem(
+      GOLD_RATE_CACHE_KEY,
+      JSON.stringify({
+        dateKey: getTodayCacheKey(),
+        payload,
+      })
+    );
+
+    return payload;
+  };
+
   const fetchRates = async () => {
+    if (RATE_MODE === 'daily') {
+      applyRates(DAILY_RATE_CONFIG);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await api.get('/v1/rates/live');
-      if (response.data.status === 'success') {
-        const data = response.data.data;
-        const dateObj = new Date(data.lastUpdated);
-        setRates(prev => ({
-          ...prev,
-          ...data,
-          lastUpdated: dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          lastUpdatedDate: dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-          trends: data.trends || prev.trends // Ensure trends is never undefined
-        }));
+      if (RATE_MODE === 'goldapi') {
+        const cachedRates = localStorage.getItem(GOLD_RATE_CACHE_KEY);
+        if (cachedRates) {
+          const parsedCache = JSON.parse(cachedRates);
+          if (parsedCache?.dateKey === getTodayCacheKey() && parsedCache?.payload) {
+            applyRates(parsedCache.payload);
+            setError(null);
+            setLoading(false);
+            return;
+          }
+        }
+
+        if (!GOLD_API_KEY) {
+          throw new Error('Missing GoldAPI key');
+        }
+
+        const payload = await fetchGoldApiRates();
+        applyRates(payload);
+        setError(null);
+      } else {
+        applyRates(DAILY_RATE_CONFIG);
         setError(null);
       }
     } catch (err) {
       console.error('Failed to fetch rates:', err);
-      setError('Live rates temporarily unavailable');
+      applyRates(DAILY_RATE_CONFIG);
+      setError('Showing saved daily rates');
     } finally {
       setLoading(false);
     }
@@ -74,8 +188,11 @@ const GoldRateSection = () => {
 
   useEffect(() => {
     fetchRates();
-    // Auto refresh every 5 minutes
-    const interval = setInterval(fetchRates, 5 * 60 * 1000);
+    if (RATE_MODE !== 'goldapi') {
+      return undefined;
+    }
+
+    const interval = setInterval(fetchRates, 60 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -95,7 +212,9 @@ const GoldRateSection = () => {
               Today's <span className="text-brand-red italic">Gold Rate</span>
             </h2>
             <p className="text-gray-600 mt-4 font-body max-w-xl">
-              Coimbatore Rate (Based on Chennai Market). Prices are updated automatically every 5 minutes based on live market indices.
+              {RATE_MODE === 'goldapi'
+                ? 'Coimbatore Rate (Based on Chennai Market). Prices refresh automatically from the gold market source and keep a saved daily fallback if the API is unavailable.'
+                : 'Coimbatore Rate (Based on Chennai Market). Prices are updated on a daily basis using your configured daily gold and silver values.'}
             </p>
           </div>
 
@@ -117,6 +236,7 @@ const GoldRateSection = () => {
             rate={rates.gold24k}
             trend={rates.trends?.gold24k || 'up'}
             delay={0.1}
+            mode={RATE_MODE}
           />
           <RateCard
             title="Gold 22K"
@@ -124,6 +244,7 @@ const GoldRateSection = () => {
             rate={rates.gold22k}
             trend={rates.trends?.gold22k || 'up'}
             delay={0.2}
+            mode={RATE_MODE}
           />
           <RateCard
             title="Gold 18K"
@@ -131,6 +252,7 @@ const GoldRateSection = () => {
             rate={rates.gold18k}
             trend={rates.trends?.gold18k || 'up'}
             delay={0.3}
+            mode={RATE_MODE}
           />
           <RateCard
             title="Silver"
@@ -138,6 +260,7 @@ const GoldRateSection = () => {
             rate={rates.silver}
             trend={rates.trends?.silver || 'up'}
             delay={0.4}
+            mode={RATE_MODE}
           />
         </div>
 
