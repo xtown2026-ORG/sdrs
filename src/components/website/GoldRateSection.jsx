@@ -2,16 +2,16 @@ import React, { useEffect, useEffectEvent, useState } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Clock, MapPin } from 'lucide-react';
 
-const GOLD_API_KEY = import.meta.env.VITE_GOLD_API_KEY;
-const GOLD_API_BASE_URL = import.meta.env.VITE_GOLD_API_BASE_URL || 'https://www.goldapi.io/api';
+const LIVE_CHENNAI_SOURCE_URL = import.meta.env.VITE_LIVE_RATE_SOURCE_URL || 'https://www.livechennai.com/gold_silverrate.asp';
+const LIVE_CHENNAI_PROXY_URL = import.meta.env.VITE_LIVE_RATE_PROXY_URL || 'https://api.allorigins.win/raw?url=';
 const GOLD_RATE_CACHE_KEY = 'sdrs-gold-rate-cache';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
 const FALLBACK_MARKET_RATES = {
-  gold24k: 15929,
-  gold22k: 14601,
-  gold18k: 12256,
-  silver: 290.1,
+  gold24k: 15960,
+  gold22k: 14630,
+  gold18k: 11970,
+  silver: 290,
   trends: {
     gold24k: 'up',
     gold22k: 'up',
@@ -77,6 +77,86 @@ const formatRate = (value) => {
   }).format(numericValue);
 };
 
+const parseNumericRate = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  const sanitizedValue = value.replace(/,/g, '').trim();
+  const numericValue = Number(sanitizedValue);
+  return Number.isNaN(numericValue) ? null : numericValue;
+};
+
+const extractLiveChennaiTableRows = (html) => {
+  const rowPattern = /(\d{2}\/[A-Za-z]{3}\/\d{4})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)/g;
+  const rows = [];
+  let match;
+
+  while ((match = rowPattern.exec(html)) !== null) {
+    rows.push({
+      date: match[1],
+      gold24k1g: parseNumericRate(match[2]),
+      gold24k8g: parseNumericRate(match[3]),
+      gold22k1g: parseNumericRate(match[4]),
+      gold22k8g: parseNumericRate(match[5])
+    });
+  }
+
+  return rows;
+};
+
+const extractSilverRows = (html) => {
+  const silverSectionMatch = html.match(/Chennai Silver Rate[\s\S]*?Date Silver 1 Gm Ready Silver \(1 Kg\)([\s\S]*?)##\s+Gold Rate in Chennai/i);
+  if (!silverSectionMatch) {
+    return [];
+  }
+
+  const rowPattern = /(\d{2}\/[A-Za-z]{3}\/\d{4})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)/g;
+  const rows = [];
+  let match;
+
+  while ((match = rowPattern.exec(silverSectionMatch[1])) !== null) {
+    rows.push({
+      date: match[1],
+      silver1g: parseNumericRate(match[2]),
+      silver1kg: parseNumericRate(match[3])
+    });
+  }
+
+  return rows;
+};
+
+const parseLiveChennaiUpdatedAt = (html) => {
+  const updateMatch = html.match(/Last Update Time:\s*(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)/i);
+  if (!updateMatch) {
+    return getCurrentDate();
+  }
+
+  const [, day, month, year, time] = updateMatch;
+  const normalizedTime = time.toUpperCase().replace(/\s+/g, ' ');
+  return new Date(`${year}-${month}-${day}T${convertTo24HourTime(normalizedTime)}+05:30`);
+};
+
+const convertTo24HourTime = (timeString) => {
+  const timeMatch = timeString.match(/(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)/i);
+  if (!timeMatch) {
+    return '00:00:00';
+  }
+
+  let [, hour, minute, second, meridiem] = timeMatch;
+  let normalizedHour = Number(hour);
+
+  if (meridiem.toUpperCase() === 'PM' && normalizedHour !== 12) {
+    normalizedHour += 12;
+  }
+
+  if (meridiem.toUpperCase() === 'AM' && normalizedHour === 12) {
+    normalizedHour = 0;
+  }
+
+  return `${String(normalizedHour).padStart(2, '0')}:${minute}:${second}`;
+};
+
 const RateCard = ({ title, weight, rate, trend, delay, isLoading, status }) => {
   const badgeLabel = isLoading ? 'Refreshing' : status === 'live' ? 'Live Chennai Market' : 'Saved Rate';
   const badgeClassName = isLoading
@@ -101,14 +181,14 @@ const RateCard = ({ title, weight, rate, trend, delay, isLoading, status }) => {
 
       <span className="text-brand-red font-bold uppercase tracking-widest text-xs mb-4">{title}</span>
       <h3 className={`text-4xl md:text-5xl font-bold text-brand-text mb-2 transition-opacity ${isLoading ? 'opacity-70 animate-pulse' : 'opacity-100'}`}>
-        ₹{formatRate(rate)}
+        &#8377;{formatRate(rate)}
       </h3>
       <p className="text-gray-500 text-xs font-bold uppercase tracking-widest">
         / {weight}
       </p>
 
       <div className={`mt-6 flex items-center gap-2 text-xs font-bold px-3 py-1 rounded-full ${badgeClassName}`}>
-        <span>{trend === 'down' ? '-' : '+'}</span>
+        <span>{status === 'live' ? '\u25CF' : trend === 'down' ? '-' : '+'}</span>
         <span>{badgeLabel}</span>
       </div>
     </motion.div>
@@ -124,34 +204,13 @@ const GoldRateSection = () => {
   const [loading, setLoading] = useState(true);
   const [fetchStatus, setFetchStatus] = useState('idle');
 
-  const parseRateDate = (value) => {
-    if (!value) {
-      return getCurrentDate();
-    }
-
-    if (value instanceof Date) {
-      return value;
-    }
-
-    if (typeof value === 'string') {
-      const ddmmyyyyMatch = value.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-      if (ddmmyyyyMatch) {
-        const [, day, month, year] = ddmmyyyyMatch;
-        return new Date(`${year}-${month}-${day}T00:00:00+05:30`);
-      }
-    }
-
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? getCurrentDate() : parsed;
-  };
-
   const buildFallbackPayload = () => ({
     ...FALLBACK_MARKET_RATES,
     updatedAt: getCurrentDate().toISOString()
   });
 
   const applyRates = (payload) => {
-    const dateObj = parseRateDate(payload.lastUpdated || payload.updatedAt);
+    const dateObj = payload.updatedAt ? new Date(payload.updatedAt) : getCurrentDate();
 
     setRates((prev) => ({
       ...prev,
@@ -185,50 +244,54 @@ const GoldRateSection = () => {
     }
   };
 
-  const buildGoldApiRates = (goldData, silverData) => {
-    const goldTrend = goldData.ch >= 0 ? 'up' : 'down';
-    const silverTrend = silverData.ch >= 0 ? 'up' : 'down';
-    const updatedAt = goldData.timestamp ? new Date(goldData.timestamp * 1000) : getCurrentDate();
+  const buildLiveChennaiRates = (html) => {
+    const goldRows = extractLiveChennaiTableRows(html);
+    const silverRows = extractSilverRows(html);
+
+    if (goldRows.length < 1 || silverRows.length < 1) {
+      throw new Error('LiveChennai page format changed');
+    }
+
+    const todayGold = goldRows[0];
+    const previousGold = goldRows[1] || goldRows[0];
+    const todaySilver = silverRows[0];
+    const previousSilver = silverRows[1] || silverRows[0];
+    const gold18k = Math.round((todayGold.gold24k1g * 0.75));
+    const previous18k = Math.round((previousGold.gold24k1g * 0.75));
+    const updatedAt = parseLiveChennaiUpdatedAt(html);
 
     return {
-      gold24k: Math.round(goldData.price_gram_24k),
-      gold22k: Math.round(goldData.price_gram_22k),
-      gold18k: Math.round(goldData.price_gram_18k),
-      silver: Number(Number(silverData.price_gram_24k).toFixed(2)),
+      gold24k: todayGold.gold24k1g,
+      gold22k: todayGold.gold22k1g,
+      gold18k,
+      silver: todaySilver.silver1g,
       updatedAt: updatedAt.toISOString(),
       trends: {
-        gold24k: goldTrend,
-        gold22k: goldTrend,
-        gold18k: goldTrend,
-        silver: silverTrend
+        gold24k: todayGold.gold24k1g >= previousGold.gold24k1g ? 'up' : 'down',
+        gold22k: todayGold.gold22k1g >= previousGold.gold22k1g ? 'up' : 'down',
+        gold18k: gold18k >= previous18k ? 'up' : 'down',
+        silver: todaySilver.silver1g >= previousSilver.silver1g ? 'up' : 'down'
       }
     };
   };
 
-  const fetchGoldApiRates = async () => {
-    const headers = {
-      'Content-Type': 'application/json',
-      'x-access-token': GOLD_API_KEY,
-      'Cache-Control': 'no-cache, no-store, max-age=0',
-      Pragma: 'no-cache',
-      Expires: '0'
-    };
+  const fetchLiveChennaiRates = async () => {
+    const response = await fetch(`${LIVE_CHENNAI_PROXY_URL}${encodeURIComponent(LIVE_CHENNAI_SOURCE_URL)}`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        Pragma: 'no-cache',
+        Expires: '0'
+      }
+    });
 
-    const [goldResponse, silverResponse] = await Promise.all([
-      fetch(`${GOLD_API_BASE_URL}/XAU/INR`, { method: 'GET', headers, cache: 'no-store' }),
-      fetch(`${GOLD_API_BASE_URL}/XAG/INR`, { method: 'GET', headers, cache: 'no-store' })
-    ]);
-
-    if (!goldResponse.ok || !silverResponse.ok) {
-      throw new Error('GoldAPI request failed');
+    if (!response.ok) {
+      throw new Error('LiveChennai request failed');
     }
 
-    const [goldData, silverData] = await Promise.all([
-      goldResponse.json(),
-      silverResponse.json()
-    ]);
-
-    const payload = buildGoldApiRates(goldData, silverData);
+    const html = await response.text();
+    const payload = buildLiveChennaiRates(html);
 
     localStorage.setItem(
       GOLD_RATE_CACHE_KEY,
@@ -249,15 +312,11 @@ const GoldRateSection = () => {
     setFetchStatus((currentStatus) => (currentStatus === 'live' && isBackgroundRefresh ? currentStatus : 'refreshing'));
 
     try {
-      if (!GOLD_API_KEY) {
-        throw new Error('Missing GoldAPI key');
-      }
-
-      const payload = await fetchGoldApiRates();
+      const payload = await fetchLiveChennaiRates();
       applyRates(payload);
       setFetchStatus('live');
     } catch (err) {
-      console.error('Failed to fetch rates:', err);
+      console.error('Failed to fetch Chennai market rates:', err);
       const cachedPayload = getCachedRates();
       const fallbackPayload = cachedPayload || buildFallbackPayload();
 
@@ -303,7 +362,7 @@ const GoldRateSection = () => {
               Today's <span className="text-brand-red italic">Gold Rate</span>
             </h2>
             <p className="text-gray-600 mt-4 font-body max-w-xl">
-              Chennai Market Gold & Silver Rates. Prices are automatically updated from live market data and refreshed throughout the day.
+              Chennai Market Gold & Silver Rates. Prices are automatically updated based on the latest Chennai bullion market rates.
             </p>
             <div className={`mt-4 inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold ${fetchStatus === 'live' ? 'bg-green-500/10 text-green-600' : 'bg-amber-500/10 text-amber-600'}`}>
               <span className={fetchStatus === 'live' ? 'animate-pulse' : ''}>&#9679;</span>
@@ -367,7 +426,7 @@ const GoldRateSection = () => {
             </div>
             <div>
               <p className="text-brand-text font-bold">Best Value Guarantee</p>
-              <p className="text-gray-600 text-sm">We offer the highest price for your gold in Coimbatore.</p>
+              <p className="text-gray-600 text-sm">We offer the highest price for your gold in Chennai.</p>
             </div>
           </div>
           <button
