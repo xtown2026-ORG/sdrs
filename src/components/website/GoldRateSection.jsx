@@ -1,20 +1,92 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useEffectEvent, useState } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Clock, MapPin } from 'lucide-react';
 
-const RATE_MODE = import.meta.env.VITE_RATE_MODE || 'goldapi';
 const GOLD_API_KEY = import.meta.env.VITE_GOLD_API_KEY;
 const GOLD_API_BASE_URL = import.meta.env.VITE_GOLD_API_BASE_URL || 'https://www.goldapi.io/api';
 const GOLD_RATE_CACHE_KEY = 'sdrs-gold-rate-cache';
-const DAILY_RATE_CONFIG = {
-  gold24k: import.meta.env.VITE_DAILY_GOLD_24K || '15764',
-  gold22k: import.meta.env.VITE_DAILY_GOLD_22K || '14450',
-  gold18k: import.meta.env.VITE_DAILY_GOLD_18K || '11823',
-  silver: import.meta.env.VITE_DAILY_SILVER || '275',
-  updatedAt: import.meta.env.VITE_DAILY_RATE_UPDATED_AT || new Date().toLocaleDateString('en-GB'),
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const INDIA_TIME_ZONE = 'Asia/Kolkata';
+const FALLBACK_MARKET_RATES = {
+  gold24k: 15929,
+  gold22k: 14601,
+  gold18k: 12256,
+  silver: 290.1,
+  trends: {
+    gold24k: 'up',
+    gold22k: 'up',
+    gold18k: 'up',
+    silver: 'up'
+  }
+};
+const EMPTY_RATES = {
+  gold24k: null,
+  gold22k: null,
+  gold18k: null,
+  silver: null,
+  updatedAt: null,
+  trends: {
+    gold24k: 'up',
+    gold22k: 'up',
+    gold18k: 'up',
+    silver: 'up'
+  }
 };
 
-const RateCard = ({ title, weight, rate, trend, delay, mode }) => {
+const getCurrentDate = () => new Date();
+
+const getIndiaDateKey = (date = getCurrentDate()) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: INDIA_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+
+const formatDisplayDate = (date) =>
+  new Intl.DateTimeFormat('en-GB', {
+    timeZone: INDIA_TIME_ZONE,
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  }).format(date);
+
+const formatDisplayTime = (date) =>
+  new Intl.DateTimeFormat('en-IN', {
+    timeZone: INDIA_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  }).format(date).toUpperCase();
+
+const formatRate = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return '---';
+  }
+
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) {
+    return value;
+  }
+
+  const hasDecimals = !Number.isInteger(numericValue);
+
+  return new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: hasDecimals ? 2 : 0
+  }).format(numericValue);
+};
+
+const RateCard = ({ title, weight, rate, trend, delay, isLoading, status }) => {
+  const badgeLabel = isLoading ? 'Refreshing' : status === 'live' ? 'Live Chennai Market' : 'Saved Rate';
+  const badgeClassName = isLoading
+    ? 'bg-brand-red/10 text-brand-red'
+    : trend === 'down'
+      ? 'bg-brand-red/10 text-brand-red'
+      : status === 'live'
+        ? 'bg-green-500/10 text-green-500'
+        : 'bg-amber-500/10 text-amber-600';
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -28,15 +100,16 @@ const RateCard = ({ title, weight, rate, trend, delay, mode }) => {
       </div>
 
       <span className="text-brand-red font-bold uppercase tracking-widest text-xs mb-4">{title}</span>
-      <h3 className="text-4xl md:text-5xl font-bold text-brand-text mb-2">
-        ₹{rate || '---'}
+      <h3 className={`text-4xl md:text-5xl font-bold text-brand-text mb-2 transition-opacity ${isLoading ? 'opacity-70 animate-pulse' : 'opacity-100'}`}>
+        ₹{formatRate(rate)}
       </h3>
       <p className="text-gray-500 text-xs font-bold uppercase tracking-widest">
         / {weight}
       </p>
 
-      <div className={`mt-6 flex items-center gap-2 text-xs font-bold px-3 py-1 rounded-full ${trend === 'down' ? 'bg-brand-red/10 text-brand-red' : 'bg-green-500/10 text-green-500'}`}>
-        {trend === 'up' ? '+' : '-'} {mode === 'live' ? 'Live Market' : 'Daily Rate'}
+      <div className={`mt-6 flex items-center gap-2 text-xs font-bold px-3 py-1 rounded-full ${badgeClassName}`}>
+        <span>{trend === 'down' ? '-' : '+'}</span>
+        <span>{badgeLabel}</span>
       </div>
     </motion.div>
   );
@@ -44,27 +117,16 @@ const RateCard = ({ title, weight, rate, trend, delay, mode }) => {
 
 const GoldRateSection = () => {
   const [rates, setRates] = useState({
-    gold24k: '15273',
-    gold22k: '14000',
-    gold18k: '11680',
-    silver: '265',
-    lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    lastUpdatedDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-    trends: {
-      gold24k: 'up',
-      gold22k: 'up',
-      gold18k: 'up',
-      silver: 'up'
-    }
+    ...EMPTY_RATES,
+    lastUpdated: '--:--',
+    lastUpdatedDate: '-- --- ----'
   });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const getTodayCacheKey = () => new Date().toISOString().slice(0, 10);
+  const [fetchStatus, setFetchStatus] = useState('idle');
 
   const parseRateDate = (value) => {
     if (!value) {
-      return new Date();
+      return getCurrentDate();
     }
 
     if (value instanceof Date) {
@@ -75,24 +137,65 @@ const GoldRateSection = () => {
       const ddmmyyyyMatch = value.match(/^(\d{2})-(\d{2})-(\d{4})$/);
       if (ddmmyyyyMatch) {
         const [, day, month, year] = ddmmyyyyMatch;
-        return new Date(`${year}-${month}-${day}T00:00:00`);
+        return new Date(`${year}-${month}-${day}T00:00:00+05:30`);
       }
     }
 
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    return Number.isNaN(parsed.getTime()) ? getCurrentDate() : parsed;
+  };
+
+  const buildFallbackPayload = () => ({
+    ...FALLBACK_MARKET_RATES,
+    updatedAt: getCurrentDate().toISOString()
+  });
+
+  const applyRates = (payload) => {
+    const dateObj = parseRateDate(payload.lastUpdated || payload.updatedAt);
+
+    setRates((prev) => ({
+      ...prev,
+      ...payload,
+      lastUpdated: formatDisplayTime(dateObj),
+      lastUpdatedDate: formatDisplayDate(dateObj),
+      trends: payload.trends || prev.trends
+    }));
+  };
+
+  const getCachedRates = () => {
+    try {
+      const cachedRates = localStorage.getItem(GOLD_RATE_CACHE_KEY);
+      if (!cachedRates) {
+        return null;
+      }
+
+      const parsedCache = JSON.parse(cachedRates);
+      if (!parsedCache?.payload) {
+        return null;
+      }
+
+      if (parsedCache.dateKey !== getIndiaDateKey()) {
+        return null;
+      }
+
+      return parsedCache.payload;
+    } catch (cacheError) {
+      console.error('Failed to read cached gold rates:', cacheError);
+      return null;
+    }
   };
 
   const buildGoldApiRates = (goldData, silverData) => {
     const goldTrend = goldData.ch >= 0 ? 'up' : 'down';
     const silverTrend = silverData.ch >= 0 ? 'up' : 'down';
+    const updatedAt = goldData.timestamp ? new Date(goldData.timestamp * 1000) : getCurrentDate();
 
     return {
       gold24k: Math.round(goldData.price_gram_24k),
       gold22k: Math.round(goldData.price_gram_22k),
       gold18k: Math.round(goldData.price_gram_18k),
-      silver: Math.round(silverData.price_gram_24k),
-      updatedAt: goldData.timestamp ? new Date(goldData.timestamp * 1000).toISOString() : new Date().toISOString(),
+      silver: Number(Number(silverData.price_gram_24k).toFixed(2)),
+      updatedAt: updatedAt.toISOString(),
       trends: {
         gold24k: goldTrend,
         gold22k: goldTrend,
@@ -102,26 +205,18 @@ const GoldRateSection = () => {
     };
   };
 
-  const applyRates = (payload) => {
-    const dateObj = parseRateDate(payload.lastUpdated || payload.updatedAt);
-    setRates(prev => ({
-      ...prev,
-      ...payload,
-      lastUpdated: dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      lastUpdatedDate: dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      trends: payload.trends || prev.trends
-    }));
-  };
-
   const fetchGoldApiRates = async () => {
     const headers = {
       'Content-Type': 'application/json',
       'x-access-token': GOLD_API_KEY,
+      'Cache-Control': 'no-cache, no-store, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0'
     };
 
     const [goldResponse, silverResponse] = await Promise.all([
-      fetch(`${GOLD_API_BASE_URL}/XAU/INR`, { method: 'GET', headers }),
-      fetch(`${GOLD_API_BASE_URL}/XAG/INR`, { method: 'GET', headers }),
+      fetch(`${GOLD_API_BASE_URL}/XAU/INR`, { method: 'GET', headers, cache: 'no-store' }),
+      fetch(`${GOLD_API_BASE_URL}/XAG/INR`, { method: 'GET', headers, cache: 'no-store' })
     ]);
 
     if (!goldResponse.ok || !silverResponse.ok) {
@@ -130,75 +225,71 @@ const GoldRateSection = () => {
 
     const [goldData, silverData] = await Promise.all([
       goldResponse.json(),
-      silverResponse.json(),
+      silverResponse.json()
     ]);
 
     const payload = buildGoldApiRates(goldData, silverData);
+
     localStorage.setItem(
       GOLD_RATE_CACHE_KEY,
       JSON.stringify({
-        dateKey: getTodayCacheKey(),
-        payload,
+        dateKey: getIndiaDateKey(),
+        payload
       })
     );
 
     return payload;
   };
 
-  const fetchRates = async () => {
-    if (RATE_MODE === 'daily') {
-      applyRates(DAILY_RATE_CONFIG);
-      setError(null);
-      setLoading(false);
-      return;
+  const fetchRates = useEffectEvent(async ({ isBackgroundRefresh = false } = {}) => {
+    if (!isBackgroundRefresh) {
+      setLoading(true);
     }
 
+    setFetchStatus((currentStatus) => (currentStatus === 'live' && isBackgroundRefresh ? currentStatus : 'refreshing'));
+
     try {
-      if (RATE_MODE === 'goldapi') {
-        const cachedRates = localStorage.getItem(GOLD_RATE_CACHE_KEY);
-        if (cachedRates) {
-          const parsedCache = JSON.parse(cachedRates);
-          if (parsedCache?.dateKey === getTodayCacheKey() && parsedCache?.payload) {
-            applyRates(parsedCache.payload);
-            setError(null);
-            setLoading(false);
-            return;
-          }
-        }
-
-        if (!GOLD_API_KEY) {
-          throw new Error('Missing GoldAPI key');
-        }
-
-        const payload = await fetchGoldApiRates();
-        applyRates(payload);
-        setError(null);
-      } else {
-        applyRates(DAILY_RATE_CONFIG);
-        setError(null);
+      if (!GOLD_API_KEY) {
+        throw new Error('Missing GoldAPI key');
       }
+
+      const payload = await fetchGoldApiRates();
+      applyRates(payload);
+      setFetchStatus('live');
     } catch (err) {
       console.error('Failed to fetch rates:', err);
-      applyRates(DAILY_RATE_CONFIG);
-      setError('Showing saved daily rates');
+      const cachedPayload = getCachedRates();
+      const fallbackPayload = cachedPayload || buildFallbackPayload();
+
+      applyRates(fallbackPayload);
+      setFetchStatus(cachedPayload ? 'stale' : 'error');
     } finally {
       setLoading(false);
     }
-  };
+  });
 
   useEffect(() => {
-    fetchRates();
-    if (RATE_MODE !== 'goldapi') {
-      return undefined;
+    const cachedPayload = getCachedRates();
+
+    if (cachedPayload) {
+      applyRates(cachedPayload);
+      setFetchStatus('stale');
+      setLoading(false);
+    } else {
+      applyRates(buildFallbackPayload());
     }
 
-    const interval = setInterval(fetchRates, 60 * 60 * 1000);
+    fetchRates({ isBackgroundRefresh: false });
+
+    const interval = setInterval(() => {
+      fetchRates({ isBackgroundRefresh: true });
+    }, REFRESH_INTERVAL_MS);
+
     return () => clearInterval(interval);
   }, []);
 
   return (
     <section className="py-20 relative overflow-hidden">
-      {/* Background decoration */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_center,rgba(166,124,0,0.05)_0%,transparent_70%)]" />
 
       <div className="container mx-auto px-6 relative z-10">
@@ -206,24 +297,25 @@ const GoldRateSection = () => {
           <div>
             <div className="flex items-center gap-2 text-brand-red mb-4">
               <MapPin size={18} />
-              <span className="font-bold tracking-widest uppercase text-xs">Coimbatore Market</span>
+              <span className="font-bold tracking-widest uppercase text-xs">Chennai Market</span>
             </div>
             <h2 className="text-4xl md:text-5xl font-bold text-brand-text">
               Today's <span className="text-brand-red italic">Gold Rate</span>
             </h2>
             <p className="text-gray-600 mt-4 font-body max-w-xl">
-              {RATE_MODE === 'goldapi'
-                ? 'Coimbatore Rate (Based on Chennai Market). Prices refresh automatically from the gold market source and keep a saved daily fallback if the API is unavailable.'
-                : 'Coimbatore Rate (Based on Chennai Market). Prices are updated on a daily basis using your configured daily gold and silver values.'}
+              Chennai Market Gold & Silver Rates. Prices are automatically updated from live market data and refreshed throughout the day.
             </p>
+            <div className={`mt-4 inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold ${fetchStatus === 'live' ? 'bg-green-500/10 text-green-600' : 'bg-amber-500/10 text-amber-600'}`}>
+              <span className={fetchStatus === 'live' ? 'animate-pulse' : ''}>&#9679;</span>
+              <span>{fetchStatus === 'live' ? 'Live Chennai Market' : 'Saved Chennai Market Rates'}</span>
+            </div>
           </div>
 
           <div className="flex flex-col items-end gap-2">
-            {error && <span className="text-brand-red text-xs font-bold uppercase">{error}</span>}
             <div className="flex items-center gap-3 bg-white/20 border border-black/5 px-6 py-3 rounded-2xl">
               <Clock size={18} className="text-brand-red" />
               <span className="text-sm text-gray-600">
-                Last Updated: <span className="text-brand-text font-bold">{rates.lastUpdatedDate}, {rates.lastUpdated}</span>
+                Last Updated: <span className={`text-brand-text font-bold ${loading ? 'animate-pulse' : ''}`}>{rates.lastUpdatedDate}, {rates.lastUpdated}</span>
               </span>
             </div>
           </div>
@@ -236,7 +328,8 @@ const GoldRateSection = () => {
             rate={rates.gold24k}
             trend={rates.trends?.gold24k || 'up'}
             delay={0.1}
-            mode={RATE_MODE}
+            isLoading={loading}
+            status={fetchStatus}
           />
           <RateCard
             title="Gold 22K"
@@ -244,7 +337,8 @@ const GoldRateSection = () => {
             rate={rates.gold22k}
             trend={rates.trends?.gold22k || 'up'}
             delay={0.2}
-            mode={RATE_MODE}
+            isLoading={loading}
+            status={fetchStatus}
           />
           <RateCard
             title="Gold 18K"
@@ -252,7 +346,8 @@ const GoldRateSection = () => {
             rate={rates.gold18k}
             trend={rates.trends?.gold18k || 'up'}
             delay={0.3}
-            mode={RATE_MODE}
+            isLoading={loading}
+            status={fetchStatus}
           />
           <RateCard
             title="Silver"
@@ -260,7 +355,8 @@ const GoldRateSection = () => {
             rate={rates.silver}
             trend={rates.trends?.silver || 'up'}
             delay={0.4}
-            mode={RATE_MODE}
+            isLoading={loading}
+            status={fetchStatus}
           />
         </div>
 
