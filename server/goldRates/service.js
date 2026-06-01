@@ -48,7 +48,13 @@ export const getChennaiRates = async ({ forceRefresh = false } = {}) => {
 
   try {
     const liveRates = await fetchLiveChennaiRates();
-    const savedRates = await saveRates(liveRates, 'livechennai');
+    let savedRates = liveRates;
+
+    try {
+      savedRates = await saveRates(liveRates, 'livechennai');
+    } catch (storageError) {
+      console.error('Failed to persist Chennai market rates:', storageError);
+    }
 
     return {
       payload: savedRates,

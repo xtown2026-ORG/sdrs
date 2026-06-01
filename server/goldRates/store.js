@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,8 +12,9 @@ const DEFAULT_CURRENT_RATES = {
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_STORE_PATH = path.resolve(__dirname, '../../data/chennai-market-rates.json');
-const STORE_PATH = process.env.GOLD_RATE_STORE_PATH || DEFAULT_STORE_PATH;
+const BUNDLED_SEED_PATH = path.resolve(__dirname, '../../data/chennai-market-rates.json');
+const DEFAULT_RUNTIME_STORE_PATH = path.join(os.tmpdir(), 'sdrs-chennai-market-rates.json');
+const STORE_PATH = process.env.GOLD_RATE_STORE_PATH || DEFAULT_RUNTIME_STORE_PATH;
 const REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
 const REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
 const REDIS_STORE_KEY = process.env.GOLD_RATE_STORE_KEY || 'sdrs:chennai-market-rates';
@@ -56,37 +58,42 @@ const buildInitialStore = () => ({
   ],
 });
 
+const normalizeStore = (parsed) => ({
+  current: parsed?.current || DEFAULT_CURRENT_RATES,
+  history: Array.isArray(parsed?.history) ? parsed.history : [],
+});
+
+const readBundledSeedStore = async () => {
+  try {
+    const raw = await fs.readFile(BUNDLED_SEED_PATH, 'utf8');
+    return normalizeStore(JSON.parse(raw));
+  } catch (error) {
+    return buildInitialStore();
+  }
+};
+
 const readStoreFile = async () => {
   if (canUseRedisStore()) {
     const result = await runRedisCommand(['GET', REDIS_STORE_KEY]);
 
     if (!result) {
-      const initialStore = buildInitialStore();
+      const initialStore = await readBundledSeedStore();
       await writeStoreFile(initialStore);
       return initialStore;
     }
 
-    const parsed = JSON.parse(result);
-    return {
-      current: parsed?.current || DEFAULT_CURRENT_RATES,
-      history: Array.isArray(parsed?.history) ? parsed.history : [],
-    };
+    return normalizeStore(JSON.parse(result));
   }
 
   try {
     const raw = await fs.readFile(STORE_PATH, 'utf8');
-    const parsed = JSON.parse(raw);
-
-    return {
-      current: parsed?.current || DEFAULT_CURRENT_RATES,
-      history: Array.isArray(parsed?.history) ? parsed.history : [],
-    };
+    return normalizeStore(JSON.parse(raw));
   } catch (error) {
     if (error.code !== 'ENOENT') {
       throw error;
     }
 
-    const initialStore = buildInitialStore();
+    const initialStore = await readBundledSeedStore();
     await writeStoreFile(initialStore);
     return initialStore;
   }

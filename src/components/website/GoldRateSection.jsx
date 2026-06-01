@@ -3,8 +3,16 @@ import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Clock, MapPin } from 'lucide-react';
 
 const GOLD_RATE_ENDPOINT = '/api/v1/gold-rates/chennai';
+const GOLD_RATE_CACHE_KEY = 'sdrs-chennai-market-rates';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
+const FALLBACK_MARKET_RATES = {
+  gold24k: '15818',
+  gold22k: '14500',
+  gold18k: '11864',
+  silver: '290',
+  updatedAt: '2026-06-01T04:08:48.000Z',
+};
 const EMPTY_RATES = {
   gold24k: null,
   gold22k: null,
@@ -60,6 +68,24 @@ const parseRateValue = (value) => {
   return Number.isNaN(numericValue) ? null : numericValue;
 };
 
+const isValidRatePayload = (payload) =>
+  Boolean(
+    payload &&
+      payload.updatedAt &&
+      payload.gold24k !== null &&
+      payload.gold24k !== undefined &&
+      payload.gold24k !== '' &&
+      payload.gold22k !== null &&
+      payload.gold22k !== undefined &&
+      payload.gold22k !== '' &&
+      payload.gold18k !== null &&
+      payload.gold18k !== undefined &&
+      payload.gold18k !== '' &&
+      payload.silver !== null &&
+      payload.silver !== undefined &&
+      payload.silver !== ''
+  );
+
 const RateCard = ({ title, weight, rate, trend, delay, isLoading, status }) => {
   const badgeLabel = isLoading ? 'Refreshing' : status === 'live' ? 'Live Chennai Market' : 'Saved Rate';
   const badgeClassName = isLoading
@@ -107,6 +133,29 @@ const GoldRateSection = () => {
   const [loading, setLoading] = useState(true);
   const [fetchStatus, setFetchStatus] = useState('idle');
   const [previousRates, setPreviousRates] = useState(null);
+
+  const getCachedRates = () => {
+    try {
+      const cachedRates = localStorage.getItem(GOLD_RATE_CACHE_KEY);
+      if (!cachedRates) {
+        return null;
+      }
+
+      const parsedCache = JSON.parse(cachedRates);
+      return isValidRatePayload(parsedCache) ? parsedCache : null;
+    } catch (error) {
+      console.error('Failed to read cached Chennai market rates:', error);
+      return null;
+    }
+  };
+
+  const saveCachedRates = (payload) => {
+    try {
+      localStorage.setItem(GOLD_RATE_CACHE_KEY, JSON.stringify(payload));
+    } catch (error) {
+      console.error('Failed to cache Chennai market rates:', error);
+    }
+  };
 
   const applyRates = (payload) => {
     const dateObj = payload.updatedAt ? new Date(payload.updatedAt) : getCurrentDate();
@@ -183,12 +232,19 @@ const GoldRateSection = () => {
       }
 
       const payload = await response.json();
+      if (!isValidRatePayload(payload)) {
+        throw new Error('Chennai gold rate payload was incomplete');
+      }
+
       const source = response.headers.get('X-Rate-Source') === 'live' ? 'live' : 'saved';
 
       applyRates(payload);
+      saveCachedRates(payload);
       setFetchStatus(source);
     } catch (error) {
       console.error('Failed to fetch Chennai market rates:', error);
+      const cachedRates = getCachedRates() || FALLBACK_MARKET_RATES;
+      applyRates(cachedRates);
       setFetchStatus('saved');
     } finally {
       setLoading(false);
@@ -196,6 +252,17 @@ const GoldRateSection = () => {
   });
 
   useEffect(() => {
+    const cachedRates = getCachedRates();
+    if (cachedRates) {
+      applyRates(cachedRates);
+      setFetchStatus('saved');
+      setLoading(false);
+    } else {
+      applyRates(FALLBACK_MARKET_RATES);
+      setFetchStatus('saved');
+      setLoading(false);
+    }
+
     fetchRates({ isBackgroundRefresh: false });
 
     const interval = setInterval(() => {
