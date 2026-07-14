@@ -105,6 +105,13 @@ const Contact = () => {
                   </div>
                </div>
                <div className="flex gap-4 group">
+                  <div className="text-brand-red group-hover:scale-125 transition-transform"><Phone size={24} /></div>
+                  <div>
+                    <h4 className="font-bold text-brand-text uppercase text-sm tracking-widest mb-1">Office</h4>
+                    <p className="text-brand-red font-body text-xl font-bold">0422 2557757</p>
+                  </div>
+               </div>
+               <div className="flex gap-4 group">
                   <div className="text-brand-red group-hover:scale-125 transition-transform"><MessageSquare size={24} /></div>
                   <div>
                     <h4 className="font-bold text-brand-text uppercase text-sm tracking-widest mb-1">WhatsApp Chat</h4>
