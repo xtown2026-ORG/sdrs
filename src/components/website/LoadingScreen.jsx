@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import logoImg from '../../assets/logo.png';
+
+import logoImg from '../../assets/profile.png';
 
 const LoadingScreen = ({ isLoaded }) => {
   return (
@@ -23,17 +24,11 @@ const LoadingScreen = ({ isLoaded }) => {
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ 
                 scale: [1, 1.05, 1],
-                opacity: 1,
-                filter: [
-                  "drop-shadow(0 0 0px rgba(166, 124, 0, 0))",
-                  "drop-shadow(0 0 30px rgba(166, 124, 0, 0.3))",
-                  "drop-shadow(0 0 0px rgba(166, 124, 0, 0))"
-                ]
+                opacity: [0, 1]
               }}
               transition={{ 
                 scale: { duration: 2, repeat: Infinity, ease: "easeInOut" },
-                opacity: { duration: 0.5 },
-                filter: { duration: 2, repeat: Infinity, ease: "easeInOut" }
+                opacity: { duration: 0.5 }
               }}
               className="w-32 h-32 md:w-48 md:h-48 mb-8"
             >

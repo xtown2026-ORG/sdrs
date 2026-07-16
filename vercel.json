@@ -1,14 +1,12 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/gold-rates-sync",
-      "schedule": "*/15 * * * *"
-    }
-  ],
   "rewrites": [
     {
       "source": "/api/v1/certificates/:path*",
       "destination": "https://sdrsapi.sdrsgoldfinance.com/api/v1/certificates/:path*"
+    },
+    {
+      "source": "/api/v1/rates/:path*",
+      "destination": "https://sdrsapi.sdrsgoldfinance.com/api/v1/rates/:path*"
     }
   ]
 }

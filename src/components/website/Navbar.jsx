@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, Phone, MessageSquare } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import logoImg from '../../assets/logo.png';
+
+import logoImg from '../../assets/profile.png';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -111,7 +112,7 @@ const Navbar = () => {
             <img 
               src={logoImg} 
               alt="SDRS Logo" 
-              className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500 [filter:drop-shadow(0_0_8px_rgba(166,124,0,0.3))_brightness(1.1)_contrast(1.1)]" 
+              className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500" 
             />
           </div>
           <div className="flex flex-col">

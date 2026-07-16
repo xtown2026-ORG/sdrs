@@ -2,7 +2,7 @@ import React, { useEffect, useEffectEvent, useState } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Clock, MapPin } from 'lucide-react';
 
-const GOLD_RATE_ENDPOINT = '/api/v1/gold-rates/chennai';
+const GOLD_RATE_ENDPOINT = '/api/v1/rates/live';
 const GOLD_RATE_CACHE_KEY = 'sdrs-chennai-market-rates';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
@@ -71,7 +71,7 @@ const parseRateValue = (value) => {
 const isValidRatePayload = (payload) =>
   Boolean(
     payload &&
-      payload.updatedAt &&
+      (payload.updatedAt || payload.lastUpdated) &&
       payload.gold24k !== null &&
       payload.gold24k !== undefined &&
       payload.gold24k !== '' &&
@@ -158,7 +158,8 @@ const GoldRateSection = () => {
   };
 
   const applyRates = (payload) => {
-    const dateObj = payload.updatedAt ? new Date(payload.updatedAt) : getCurrentDate();
+    const timestamp = payload.updatedAt || payload.lastUpdated;
+    const dateObj = timestamp ? new Date(timestamp) : getCurrentDate();
 
     setPreviousRates((currentRates) => ({
       gold24k: parseRateValue(currentRates?.gold24k),
@@ -231,12 +232,14 @@ const GoldRateSection = () => {
         throw new Error('Chennai gold rate request failed');
       }
 
-      const payload = await response.json();
+      const jsonResponse = await response.json();
+      const payload = jsonResponse.data || jsonResponse;
+
       if (!isValidRatePayload(payload)) {
         throw new Error('Chennai gold rate payload was incomplete');
       }
 
-      const source = response.headers.get('X-Rate-Source') === 'live' ? 'live' : 'saved';
+      const source = jsonResponse.status === 'success' ? 'live' : (response.headers.get('X-Rate-Source') === 'live' ? 'live' : 'saved');
 
       applyRates(payload);
       saveCachedRates(payload);

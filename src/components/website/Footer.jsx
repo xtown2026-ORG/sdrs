@@ -2,7 +2,8 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Mail, ArrowUp } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import logoImg from '../../assets/logo.png';
+
+import logoImg from '../../assets/profile.png';
 
 const FacebookIcon = ({ size = 18 }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -30,7 +31,7 @@ const Footer = () => {
           <div className="col-span-1 md:col-span-1 lg:col-span-1">
             <Link to="/" className="flex items-center gap-3 mb-6 group">
               <div className="w-16 h-16 overflow-hidden flex items-center justify-center group-hover:scale-110 transition-transform duration-500">
-                <img src={logoImg} alt="SDRS Logo" className="w-full h-full object-contain [filter:drop-shadow(0_0_8px_rgba(166,124,0,0.3))_brightness(1.1)_contrast(1.1)]" />
+                <img src={logoImg} alt="SDRS Logo" className="w-full h-full object-contain" />
               </div>
               <div className="flex flex-col">
                 <span className="font-heading text-2xl font-bold tracking-tight text-brand-text leading-none">
