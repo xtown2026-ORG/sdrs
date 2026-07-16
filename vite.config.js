@@ -13,7 +13,7 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/api/v1/rates': {
-        target: 'https://sdrsapi.sdrsgoldfinance.com',
+        target: 'http://localhost:5000',
         changeOrigin: true,
       },
     },
