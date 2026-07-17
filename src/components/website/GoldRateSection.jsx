@@ -2,10 +2,13 @@ import React, { useEffect, useEffectEvent, useState } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Clock, MapPin } from 'lucide-react';
 
-const GOLD_RATE_ENDPOINT = '/api/v1/rates/live';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+const GOLD_RATE_ENDPOINT = `${API_BASE_URL}/api/v1/rates/live`;
 const GOLD_RATE_CACHE_KEY = 'sdrs-chennai-market-rates';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
+
 const FALLBACK_MARKET_RATES = {
   gold24k: '15818',
   gold22k: '14500',
@@ -71,19 +74,19 @@ const parseRateValue = (value) => {
 const isValidRatePayload = (payload) =>
   Boolean(
     payload &&
-      (payload.updatedAt || payload.lastUpdated) &&
-      payload.gold24k !== null &&
-      payload.gold24k !== undefined &&
-      payload.gold24k !== '' &&
-      payload.gold22k !== null &&
-      payload.gold22k !== undefined &&
-      payload.gold22k !== '' &&
-      payload.gold18k !== null &&
-      payload.gold18k !== undefined &&
-      payload.gold18k !== '' &&
-      payload.silver !== null &&
-      payload.silver !== undefined &&
-      payload.silver !== ''
+    (payload.updatedAt || payload.lastUpdated) &&
+    payload.gold24k !== null &&
+    payload.gold24k !== undefined &&
+    payload.gold24k !== '' &&
+    payload.gold22k !== null &&
+    payload.gold22k !== undefined &&
+    payload.gold22k !== '' &&
+    payload.gold18k !== null &&
+    payload.gold18k !== undefined &&
+    payload.gold18k !== '' &&
+    payload.silver !== null &&
+    payload.silver !== undefined &&
+    payload.silver !== ''
   );
 
 const RateCard = ({ title, weight, rate, trend, delay, isLoading, status }) => {
